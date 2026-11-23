@@ -1,0 +1,20 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Secrets and local settings (never commit)
+.env
+.dvc/config.local
+
+# Raw data stays out of Git (processed versions are tracked by DVC)
+data/raw/
+*.xls
+*.zip
+
+# Local MLflow and run outputs
+mlruns/
+mlartifacts/
+results/
