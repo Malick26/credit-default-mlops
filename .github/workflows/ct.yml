@@ -1,0 +1,84 @@
+name: Continuous training
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Run the CT pipeline on a dataset version, or roll back production
+        type: choice
+        required: true
+        default: pipeline
+        options:
+          - pipeline
+          - rollback
+      dataset_version:
+        description: Dataset version delivered (pipeline only)
+        type: choice
+        required: true
+        default: v1
+        options:
+          - v1
+          - v2
+          - v3
+      rollback_version:
+        description: Approved model version to restore (rollback only)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+# Never run two operations that can move the champion alias at the same time.
+concurrency:
+  group: credit-default-production
+  cancel-in-progress: false
+
+jobs:
+  ct:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MLFLOW_TRACKING_URI: ${{ vars.MLFLOW_TRACKING_URI }}
+      MLFLOW_TRACKING_USERNAME: ${{ vars.MLFLOW_TRACKING_USERNAME }}
+      MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+      RUN_OUTPUT_DIR: results
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-ml.txt
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements-ml.txt
+
+      - name: Fetch the dataset versions from Azure (DVC)
+        env:
+          AZURE_SAS_TOKEN: ${{ secrets.AZURE_SAS_TOKEN }}
+        run: |
+          dvc remote modify --local azure sas_token "$AZURE_SAS_TOKEN"
+          dvc pull data/v1.dvc data/v2.dvc data/v3.dvc
+
+      - name: Validate, evaluate, retrain and promote when eligible
+        if: ${{ inputs.operation == 'pipeline' }}
+        env:
+          DATASET_VERSION: ${{ inputs.dataset_version }}
+        run: python -m ml.ct pipeline --dataset-version "$DATASET_VERSION"
+
+      - name: Roll back to a previously approved version
+        if: ${{ inputs.operation == 'rollback' }}
+        env:
+          TARGET_VERSION: ${{ inputs.rollback_version }}
+        run: python -m ml.ct rollback --version "$TARGET_VERSION"
+
+      - name: Upload the decision
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ct-decision
+          path: results/
+          if-no-files-found: warn
