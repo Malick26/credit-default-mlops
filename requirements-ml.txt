@@ -7,3 +7,4 @@ mlflow==2.22.5
 dvc[azure]==3.59.2
 # dvc 3.59 breaks with pathspec 1.x
 pathspec==0.12.1
+SQLAlchemy==2.0.41
