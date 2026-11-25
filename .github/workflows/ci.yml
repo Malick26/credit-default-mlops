@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, staging, main]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: tests-and-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check app ml tests
+
+      - name: Tests (local test registry, no DagsHub)
+        run: pytest -q
+
+  docker:
+    name: docker-build-and-smoke-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Build the production image
+        run: docker build --build-arg GIT_SHA=${{ github.sha }} -t credit-default:${{ github.sha }} .
+
+      - name: Start a test MLflow registry with a test model
+        run: |
+          python -m pip install -r requirements-dev.txt
+          mlflow server --backend-store-uri sqlite:///$RUNNER_TEMP/mlflow.db \
+            --artifacts-destination $RUNNER_TEMP/artifacts --host 127.0.0.1 --port 5000 &
+          for i in $(seq 1 30); do curl -fs http://127.0.0.1:5000/health && break; sleep 2; done
+          MLFLOW_TRACKING_URI=http://127.0.0.1:5000 python -m tests.smoke.make_registry
+
+      - name: Run the image and smoke-test it
+        run: |
+          docker run -d --name app --network host \
+            -e MLFLOW_TRACKING_URI=http://127.0.0.1:5000 -e PORT=8000 \
+            credit-default:${{ github.sha }}
+          python -m tests.smoke.smoke_test http://127.0.0.1:8000 --expect-version 1 --timeout 120
+
+      - name: Container logs
+        if: ${{ always() }}
+        run: docker logs app || true

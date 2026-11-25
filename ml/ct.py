@@ -57,7 +57,7 @@ def run_pipeline(version: str) -> dict:
     except (OSError, ValueError) as exc:
         write_decision({**decision, "validation": "failed", "decision": "validation_failed",
                         "reason": str(exc)})
-        raise SystemExit(1)
+        raise SystemExit(1) from exc
     decision.update({"validation": "passed", "dvc_hash": dvc_hash(version),
                      "train_rows": len(train_df), "evaluation_rows": len(evaluation)})
 
@@ -135,7 +135,7 @@ def run_rollback(target: str) -> dict:
     except ValueError as exc:
         write_decision({**decision, "decision": "rollback_refused", "reason": str(exc),
                         "champion_after": decision["champion_before"]})
-        raise SystemExit(1)
+        raise SystemExit(1) from exc
 
     mlflow.set_experiment(EXPERIMENT)
     with mlflow.start_run(run_name=f"rollback-to-v{target}"):
